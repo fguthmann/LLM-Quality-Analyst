@@ -15,17 +15,23 @@ def get_answer(model, question):
 
 def get_wolfram_alpha_answer(question):
     redis_client = redis.Redis(host='localhost', port=6379, db=0)
-    appid = "L3PH8R-XRWETEVXUK"  # Replace with your actual App ID
-    encoded_question = requests.utils.quote(question)
-    url = f"https://api.wolframalpha.com/v1/result?i={encoded_question}&appid={appid}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        # Cache the response with an expiration of 4 hours (14400 seconds)
-        redis_client.setex(question, 14400, response.text)
-        return response.text
+    # Check if the answer is in the cache
+    cached_answer = redis_client.get(question)
+    if cached_answer is not None:
+        print(f"Retrieved from Redis: {question}")  # Debugging line
+        answer = cached_answer.decode()
     else:
-        return None  # Handle cases where Wolfram Alpha doesn't return an answer
-
+        appid = "L3PH8R-XRWETEVXUK"  # Replace with your actual App ID
+        encoded_question = requests.utils.quote(question)
+        url = f"https://api.wolframalpha.com/v1/result?i={encoded_question}&appid={appid}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            # Cache the response with an expiration of 4 hours (14400 seconds)
+            redis_client.setex(question, 14400, response.text)
+            answer = response.text
+        else:
+            answer = None  # Handle cases where Wolfram Alpha doesn't return an answer
+    return answer
 
 def read_questions(file_path):
     questions = []
@@ -83,6 +89,11 @@ def main():
     instruct_model = GPT4All("mistral-7b-instruct-v0.1.Q4_0.gguf")
     questions = read_questions("General_Knowledge_Questions.csv")
     results = []
+    nbr_answers_Wolfram = 0
+    avg_answer_rating_mini_orca = 0.0
+    avg_answer_rating_instruct = 0.0
+
+
 
     for question in questions:
         mini_orca_answer, mini_orca_time = get_answer(mini_orca_model, question)
@@ -93,7 +104,7 @@ def main():
 
         if wolfram_answer is None:
             continue  # Skip the question if Wolfram Alpha doesn't have an answer
-
+        nbr_answers_Wolfram += 1
         # Use the Orca model to assess answer similarity/correctness
         orca_correctness = assess_answer_similarity(mini_orca_model, question, wolfram_answer, mini_orca_answer)
         if orca_correctness is not None:
@@ -103,7 +114,8 @@ def main():
         if instruct_correctness is not None:
             results.append([question, "instruct-model", instruct_answer, instruct_time, instruct_correctness])
     write_results(results)
-
+    print(f"Number of questions answered: {nbr_answers_Wolfram}")
+    
 
 if __name__ == "__main__":
     main()
